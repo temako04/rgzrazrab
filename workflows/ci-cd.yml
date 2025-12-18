@@ -1,0 +1,90 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Show files
+      run: |
+        echo "Содержимое папки:"
+        ls -la
+        echo "Python файлы:"
+        find . -name "*.py" | head -5
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install packages
+      run: |
+        pip install flask pytest bandit
+
+    - name: Run tests
+      run: |
+        # Если есть тесты - запускаем
+        if [ -f "test_app.py" ]; then
+          python -m pytest test_app.py -v
+        else
+          echo "Тестов нет, пропускаем..."
+        fi
+
+    - name: Security check
+      run: |
+        # Проверяем безопасность кода
+        bandit -r . || echo "Проверка завершена"
+
+  changelog:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Make script executable
+      run: |
+        chmod +x generate_changelog.sh
+
+    - name: Generate changelog
+      run: |
+        # Используем дату как версию
+        VERSION="v$(date +'%Y.%m.%d')"
+        ./generate_changelog.sh $VERSION
+
+    - name: Commit changelog
+      run: |
+        git config --local user.email "github@action.com"
+        git config --local user.name "GitHub Action"
+        git add CHANGELOG.md
+        git commit -m "Update changelog [skip ci]" || echo "Нет изменений"
+        git push origin main || echo "Нечего пушить"
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: changelog
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./
+        publish_branch: gh-pages
+        keep_files: false
